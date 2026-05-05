@@ -10,32 +10,27 @@ import requests
 import matplotlib.pyplot as plt
 from services.segmentation_service import segment_customers
 
-API_URL = "http://127.0.0.1:5000/upload"
+API_URL = "https://your-render-url.onrender.com/upload"  # UPDATE THIS
 
 st.set_page_config(page_title="ML Analytics Dashboard", layout="wide")
 
 # ==========================
-# ROLE DEFINITIONS
+# ROLE SETUP
 # ==========================
 USERS = {
     "admin": {"password": "1234", "role": "Admin"},
     "analyst": {"password": "abcd", "role": "Analyst"}
 }
 
-# ==========================
-# SESSION INIT
-# ==========================
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
-
 if "role" not in st.session_state:
     st.session_state.role = None
 
 # ==========================
-# LOGIN PAGE
+# LOGIN
 # ==========================
 if not st.session_state.authenticated:
-
     st.title("🔐 Login Required")
 
     username = st.text_input("Username")
@@ -45,7 +40,6 @@ if not st.session_state.authenticated:
         if username in USERS and USERS[username]["password"] == password:
             st.session_state.authenticated = True
             st.session_state.role = USERS[username]["role"]
-            st.success("Login successful!")
             st.rerun()
         else:
             st.error("Invalid credentials")
@@ -53,99 +47,132 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ==========================
-# DASHBOARD
+# SIDEBAR
 # ==========================
-st.title("📊 Intelligent Marketing Analytics System (ML-Based)")
-
+st.sidebar.title("Controls")
 st.sidebar.success(f"Logged in as: {st.session_state.role}")
 
-# Logout button
 if st.sidebar.button("Logout"):
     st.session_state.authenticated = False
     st.session_state.role = None
     st.rerun()
 
 # ==========================
-# UPLOAD (ADMIN ONLY)
+# ADMIN UPLOAD
 # ==========================
 if st.session_state.role == "Admin":
-    st.header("Upload Dataset (Admin Access)")
+    uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
-    uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
+    if uploaded_file:
+        with open("temp.csv", "wb") as f:
+            f.write(uploaded_file.getbuffer())
 
-    if uploaded_file is not None:
-
-        with st.spinner("Processing dataset..."):
-
-            with open("temp.csv", "wb") as f:
-                f.write(uploaded_file.getbuffer())
-
-            files = {"file": open("temp.csv", "rb")}
-            response = requests.post(API_URL, files=files)
-
-            if response.status_code == 200:
-                st.success("File processed successfully!")
-            else:
-                st.error("Error processing file.")
-                st.write(response.text)
-
-else:
-    st.info("📊 Analyst role: View-only access")
+        files = {"file": open("temp.csv", "rb")}
+        requests.post(API_URL, files=files)
 
 # ==========================
-# DISPLAY DASHBOARD
+# LOAD DATA
 # ==========================
 if os.path.exists("temp.csv"):
 
     df = pd.read_csv("temp.csv")
     df = segment_customers(df)
 
-    # Compute locally for analyst view
-    total_revenue = df["revenue"].sum()
-    avg_revenue = df["revenue"].mean()
-    total_customers = len(df)
-    avg_frequency = df["frequency"].mean()
+    # Sidebar Filters
+    st.sidebar.subheader("Filters")
 
-    st.header("Key Performance Indicators")
+    selected_segments = st.sidebar.multiselect(
+        "Select Segments",
+        options=df["segment"].unique(),
+        default=df["segment"].unique()
+    )
 
-    col1, col2, col3, col4 = st.columns(4)
+    min_revenue = st.sidebar.slider(
+        "Minimum Revenue",
+        min_value=int(df["revenue"].min()),
+        max_value=int(df["revenue"].max()),
+        value=int(df["revenue"].min())
+    )
 
-    col1.metric("Total Revenue", f"${total_revenue:.2f}")
-    col2.metric("Avg Revenue", f"${avg_revenue:.2f}")
-    col3.metric("Total Customers", total_customers)
-    col4.metric("Avg Frequency", f"{avg_frequency:.2f}")
+    df = df[df["segment"].isin(selected_segments)]
+    df = df[df["revenue"] >= min_revenue]
 
-    # Segment Distribution
-    st.header("Segment Distribution")
-    st.bar_chart(df["segment"].value_counts())
+    # ==========================
+    # TABS
+    # ==========================
+    tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "📈 Segment Comparison", "📥 Download"])
 
-    # Revenue by Segment
-    st.header("Revenue by Segment")
-    st.bar_chart(df.groupby("segment")["revenue"].sum())
+    # --------------------------
+    # TAB 1: MAIN DASHBOARD
+    # --------------------------
+    with tab1:
 
-    # Cluster Visualization
-    st.header("Customer Segmentation (Cluster Visualization)")
+        st.title("📊 Executive Dashboard")
 
-    fig, ax = plt.subplots(figsize=(3.5, 2.5))
+        col1, col2, col3, col4 = st.columns(4)
 
-    for segment in df["segment"].unique():
-        subset = df[df["segment"] == segment]
-        ax.scatter(
-            subset["revenue"],
-            subset["frequency"],
-            label=segment,
-            alpha=0.7
+        col1.metric("Total Revenue", f"${df['revenue'].sum():.2f}")
+        col2.metric("Avg Revenue", f"${df['revenue'].mean():.2f}")
+        col3.metric("Customers", len(df))
+        col4.metric("Avg Frequency", f"{df['frequency'].mean():.2f}")
+
+        st.subheader("Segment Distribution")
+        st.bar_chart(df["segment"].value_counts())
+
+        st.subheader("Revenue by Segment")
+        st.bar_chart(df.groupby("segment")["revenue"].sum())
+
+        st.subheader("Customer Segmentation (Scatter View)")
+
+        fig, ax = plt.subplots(figsize=(4, 3))
+
+        for segment in df["segment"].unique():
+            subset = df[df["segment"] == segment]
+            ax.scatter(
+                subset["revenue"],
+                subset["frequency"],
+                label=segment,
+                alpha=0.7
+            )
+
+        ax.set_xlabel("Revenue")
+        ax.set_ylabel("Frequency")
+        ax.legend()
+
+        st.pyplot(fig)
+
+    # --------------------------
+    # TAB 2: SEGMENT COMPARISON
+    # --------------------------
+    with tab2:
+
+        st.title("📈 Segment Comparison Analysis")
+
+        comparison_df = df.groupby("segment").agg(
+            revenue_sum=("revenue", "sum"),
+            avg_frequency=("frequency", "mean"),
+            customer_count=("segment", "count")
         )
 
-    ax.set_xlabel("Revenue")
-    ax.set_ylabel("Frequency")
-    ax.set_title("Revenue vs Frequency Clusters")
-    ax.legend()
+        st.dataframe(comparison_df)
 
-    col_left, col_right = st.columns([2, 1])
+        st.bar_chart(comparison_df["revenue_sum"])
 
-    with col_left:
-        st.pyplot(fig)
+    # --------------------------
+    # TAB 3: DOWNLOAD
+    # --------------------------
+    with tab3:
+
+        st.title("📥 Download Data")
+
+        csv_data = df.to_csv(index=False)
+
+        st.download_button(
+            label="Download Filtered Data",
+            data=csv_data,
+            file_name="filtered_data.csv",
+            mime="text/csv"
+        )
 
 else:
     st.warning("No dataset uploaded yet.")
