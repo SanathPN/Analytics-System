@@ -2,21 +2,47 @@ import sys
 import os
 
 # Add project root to Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(BASE_DIR)
 
 import streamlit as st
 import pandas as pd
 import requests
 import matplotlib.pyplot as plt
 from services.segmentation_service import segment_customers
+from services.validation_service import validate_dataset
 
 API_URL = "https://your-render-url.onrender.com/upload"  # UPDATE THIS
 
 st.set_page_config(page_title="ML Analytics Dashboard", layout="wide")
 
+TEMP_PATH = os.path.join(BASE_DIR, "temp.csv")
+
+# ==========================
+# CACHING FUNCTIONS
+# ==========================
+
+@st.cache_data
+def load_data(file_path):
+    return pd.read_csv(file_path)
+
+@st.cache_data
+def get_segmented_data(df):
+    return segment_customers(df)
+
+@st.cache_data
+def compute_kpis(df):
+    return {
+        "total_revenue": df["revenue"].sum(),
+        "avg_revenue": df["revenue"].mean(),
+        "total_customers": len(df),
+        "avg_frequency": df["frequency"].mean()
+    }
+
 # ==========================
 # ROLE SETUP
 # ==========================
+
 USERS = {
     "admin": {"password": "1234", "role": "Admin"},
     "analyst": {"password": "abcd", "role": "Analyst"}
@@ -30,6 +56,7 @@ if "role" not in st.session_state:
 # ==========================
 # LOGIN
 # ==========================
+
 if not st.session_state.authenticated:
     st.title("🔐 Login Required")
 
@@ -49,6 +76,7 @@ if not st.session_state.authenticated:
 # ==========================
 # SIDEBAR
 # ==========================
+
 st.sidebar.title("Controls")
 st.sidebar.success(f"Logged in as: {st.session_state.role}")
 
@@ -60,25 +88,40 @@ if st.sidebar.button("Logout"):
 # ==========================
 # ADMIN UPLOAD
 # ==========================
+
 if st.session_state.role == "Admin":
     uploaded_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
 
     if uploaded_file:
-        with open("temp.csv", "wb") as f:
+        with open(TEMP_PATH, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-        files = {"file": open("temp.csv", "rb")}
+        files = {"file": open(TEMP_PATH, "rb")}
         requests.post(API_URL, files=files)
 
 # ==========================
 # LOAD DATA
 # ==========================
-if os.path.exists("temp.csv"):
 
-    df = pd.read_csv("temp.csv")
-    df = segment_customers(df)
+if os.path.exists(TEMP_PATH):
 
-    # Sidebar Filters
+    try:
+        df = load_data(TEMP_PATH)
+
+        # Validate first
+        validate_dataset(df)
+
+        # Then segment
+        df = get_segmented_data(df)
+
+    except Exception as e:
+        st.error(f"Validation Error: {str(e)}")
+        st.stop()
+
+    # ==========================
+    # SIDEBAR FILTERS
+    # ==========================
+
     st.sidebar.subheader("Filters")
 
     selected_segments = st.sidebar.multiselect(
@@ -100,21 +143,20 @@ if os.path.exists("temp.csv"):
     # ==========================
     # TABS
     # ==========================
+
     tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "📈 Segment Comparison", "📥 Download"])
 
-    # --------------------------
-    # TAB 1: MAIN DASHBOARD
-    # --------------------------
     with tab1:
-
         st.title("📊 Executive Dashboard")
+
+        kpis = compute_kpis(df)
 
         col1, col2, col3, col4 = st.columns(4)
 
-        col1.metric("Total Revenue", f"${df['revenue'].sum():.2f}")
-        col2.metric("Avg Revenue", f"${df['revenue'].mean():.2f}")
-        col3.metric("Customers", len(df))
-        col4.metric("Avg Frequency", f"{df['frequency'].mean():.2f}")
+        col1.metric("Total Revenue", f"${kpis['total_revenue']:.2f}")
+        col2.metric("Avg Revenue", f"${kpis['avg_revenue']:.2f}")
+        col3.metric("Customers", kpis["total_customers"])
+        col4.metric("Avg Frequency", f"{kpis['avg_frequency']:.2f}")
 
         st.subheader("Segment Distribution")
         st.bar_chart(df["segment"].value_counts())
@@ -141,11 +183,7 @@ if os.path.exists("temp.csv"):
 
         st.pyplot(fig)
 
-    # --------------------------
-    # TAB 2: SEGMENT COMPARISON
-    # --------------------------
     with tab2:
-
         st.title("📈 Segment Comparison Analysis")
 
         comparison_df = df.groupby("segment").agg(
@@ -155,14 +193,9 @@ if os.path.exists("temp.csv"):
         )
 
         st.dataframe(comparison_df)
-
         st.bar_chart(comparison_df["revenue_sum"])
 
-    # --------------------------
-    # TAB 3: DOWNLOAD
-    # --------------------------
     with tab3:
-
         st.title("📥 Download Data")
 
         csv_data = df.to_csv(index=False)

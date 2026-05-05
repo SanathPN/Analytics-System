@@ -1,84 +1,102 @@
-from flask import Flask, request, jsonify
 import os
+import time
+import logging
 import pandas as pd
+from flask import Flask, request, jsonify
 
-# Import services
-from services.validation_service import validate_csv
-from services.preprocessing_service import preprocess_data
+from services.validation_service import validate_dataset
+from services.preprocessing_service import preprocess_dataset
 from services.segmentation_service import segment_customers
 from services.analytics_service import calculate_kpis
-from database.repository import save_to_database
+from database.repository import save_records
+
+# -------------------------------
+# Logging Configuration
+# -------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Configure upload folder
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-
-
 # -------------------------------
-# Home Route (Health Check)
+# Health Check Route
 # -------------------------------
 @app.route("/", methods=["GET"])
 def home():
+    logger.info("Health check endpoint accessed")
     return jsonify({
         "status": "Analytics System Running",
-        "message": "Phase 1 Prototype Active"
+        "message": "Cloud Deployment Active"
     })
 
 
 # -------------------------------
-# File Upload + Processing Route
+# Upload & Process Route
 # -------------------------------
 @app.route("/upload", methods=["POST"])
 def upload_file():
 
-    # Check file presence
+    start_time = time.time()
+
     if "file" not in request.files:
+        logger.warning("Upload attempt without file")
         return jsonify({"error": "No file uploaded"}), 400
 
     file = request.files["file"]
 
-    if file.filename == "":
-        return jsonify({"error": "Empty file name"}), 400
-
     try:
-        # Save uploaded file
-        file_path = os.path.join(app.config["UPLOAD_FOLDER"], file.filename)
-        file.save(file_path)
+        logger.info("File upload received")
 
-        # Step 1: Validate
-        df = validate_csv(file_path)
+        # Read CSV
+        df = pd.read_csv(file)
 
-        # Step 2: Preprocess
-        df = preprocess_data(df)
+        logger.info(f"Dataset size received: {len(df)} records")
 
-        # Step 3: Segmentation
+        # Validate
+        validate_dataset(df)
+        logger.info("Dataset validation completed")
+
+        # Preprocess
+        df = preprocess_dataset(df)
+        logger.info("Preprocessing completed")
+
+        # Segment
         df = segment_customers(df)
+        logger.info("Segmentation completed")
 
-        # Step 4: Analytics
+        # Calculate KPIs
         kpis = calculate_kpis(df)
+        logger.info("KPI calculation completed")
 
-        # Step 5: Save to Database
-        save_to_database(df)
+        # Save to database
+        save_records(df)
+        logger.info("Database save completed")
+
+        end_time = time.time()
+        processing_time = round(end_time - start_time, 4)
+
+        logger.info(f"Processing time: {processing_time} seconds")
 
         return jsonify({
             "message": "File processed successfully",
             "records_processed": len(df),
+            "processing_time_seconds": processing_time,
             "kpis": kpis
         })
 
     except Exception as e:
-        return jsonify({
-            "error": str(e)
-        }), 400
+        logger.error(f"Processing failed: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 
 # -------------------------------
-# Run Application
+# Run Application (Cloud Ready)
 # -------------------------------
 if __name__ == "__main__":
-    import os
     port = int(os.environ.get("PORT", 5000))
+    logger.info(f"Starting server on port {port}")
     app.run(host="0.0.0.0", port=port)

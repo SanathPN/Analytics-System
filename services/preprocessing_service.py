@@ -1,39 +1,59 @@
 import pandas as pd
 
 
-def preprocess_data(df):
+def preprocess_dataset(df):
     """
-    Preprocesses validated dataset.
-    Operations:
-    - Ensure correct data types
+    Performs preprocessing before segmentation.
+
+    Steps:
+    - Standardize column names
     - Remove duplicates
-    - Create derived metrics
-    - Normalize basic values if needed
+    - Convert to numeric safely
+    - Remove invalid rows
+    - Enforce non-negative values
+    - Handle zero frequency safely
+    - Create derived features
     """
 
-    # Ensure numeric types (safety check)
+    # -------------------------------
+    # Standardize Column Names
+    # -------------------------------
+    df.columns = df.columns.str.lower().str.strip()
+
+    # -------------------------------
+    # Remove Duplicates
+    # -------------------------------
+    df = df.drop_duplicates()
+
+    # -------------------------------
+    # Convert to Numeric (Safe)
+    # -------------------------------
     df["revenue"] = pd.to_numeric(df["revenue"], errors="coerce")
     df["frequency"] = pd.to_numeric(df["frequency"], errors="coerce")
 
-    # Drop rows with conversion errors
+    # -------------------------------
+    # Remove Rows with Invalid Data
+    # -------------------------------
     df = df.dropna(subset=["revenue", "frequency"])
 
-    # Remove duplicate rows
-    df = df.drop_duplicates()
+    # -------------------------------
+    # Enforce Non-Negative Values
+    # -------------------------------
+    df = df[(df["revenue"] >= 0) & (df["frequency"] >= 0)]
 
-    # Derived metric: revenue per frequency
+    # -------------------------------
+    # Avoid Division by Zero
+    # -------------------------------
+    df = df[df["frequency"] != 0]
+
+    # -------------------------------
+    # Derived Feature
+    # -------------------------------
     df["revenue_per_transaction"] = df["revenue"] / df["frequency"]
 
-    # Handle divide-by-zero cases
-    df["revenue_per_transaction"] = df["revenue_per_transaction"].replace(
-        [float("inf"), -float("inf")], 0
-    )
-
-    # Optional normalization (for future ML use)
-    max_revenue = df["revenue"].max()
-    if max_revenue != 0:
-        df["normalized_revenue"] = df["revenue"] / max_revenue
-    else:
-        df["normalized_revenue"] = 0
+    # -------------------------------
+    # Reset Index
+    # -------------------------------
+    df = df.reset_index(drop=True)
 
     return df

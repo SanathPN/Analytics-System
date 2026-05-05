@@ -1,37 +1,48 @@
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from database.models import engine, Customer
+from database.models import Base, CustomerRecord
+
+# -------------------------------
+# Database Configuration
+# -------------------------------
+
+DATABASE_URL = "sqlite:///database.db"
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False}
+)
+
+# Create tables if they do not exist
+Base.metadata.create_all(engine)
+
+SessionLocal = sessionmaker(bind=engine)
 
 
-# Create session factory
-Session = sessionmaker(bind=engine)
+# -------------------------------
+# Save Records Function
+# -------------------------------
 
-
-def save_to_database(df):
+def save_records(df):
     """
-    Saves processed dataframe records into the database.
-    Clears previous data for fresh demo runs.
+    Saves processed customer records into the SQLite database.
     """
 
-    session = Session()
+    session = SessionLocal()
 
     try:
-        # Optional: Clear existing records (useful for demo reset)
-        session.query(Customer).delete()
-
         for _, row in df.iterrows():
-            customer = Customer(
+
+            record = CustomerRecord(
                 revenue=float(row["revenue"]),
                 frequency=int(row["frequency"]),
-                segment=row["segment"],
+                segment=str(row["segment"]),
                 revenue_per_transaction=float(
                     row.get("revenue_per_transaction", 0)
-                ),
-                normalized_revenue=float(
-                    row.get("normalized_revenue", 0)
                 )
             )
 
-            session.add(customer)
+            session.add(record)
 
         session.commit()
 
@@ -41,37 +52,3 @@ def save_to_database(df):
 
     finally:
         session.close()
-
-
-def fetch_all_records():
-    """
-    Fetch all records from database.
-    Useful for dashboard extension.
-    """
-    session = Session()
-    records = session.query(Customer).all()
-    session.close()
-    return records
-
-
-def fetch_segment_summary():
-    """
-    Returns revenue summary grouped by segment.
-    """
-    session = Session()
-
-    results = (
-        session.query(
-            Customer.segment,
-            Customer.revenue
-        )
-        .all()
-    )
-
-    session.close()
-
-    summary = {}
-    for segment, revenue in results:
-        summary[segment] = summary.get(segment, 0) + revenue
-
-    return summary
